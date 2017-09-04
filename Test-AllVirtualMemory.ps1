@@ -1,3 +1,48 @@
+<#
+
+.SYNOPSIS
+
+Get Hash values from process memory.  This script will remotly scan the CODE virtual memory of the target system
+and perform SHA256 hash against each PAGE of memory.  It identifies shared code pages and only scan's shared pages
+1 time.  This help's the performance (at least 1/2 the pages should be shared).
+
+It then send's sufficent information to a cloud box that queries a hash database and applies some de-locating
+so that it can match the pages hash values properly (a few more cases here).
+
+There will be NO false positives, only false negatives.  So you may be told something is NOT safe when it is.
+Hopefully this isn't too often.
+
+Only expect Microsoft binaries to be in the hash database, I don't have you're software ;)
+
+This is an experamental server in Azure, if it get's expensive I'm going to have to shut it down or ask somebody to pay for it.
+
+I may just hand out the server code so you can host you're own.
+
+This script is not that fast right now and takes a while to run. But it should detect anybody using any sort of reflective DLL 
+injection (again if we have the software, so like if they use OLE32.dll or whatever to inject into this will find them). 
+
+We have a few trillion hashes in the server, it's very big.  The cache is only 5GB though so if it get's polluted I have to empty 
+it manually right now. Anyhow that's my problem ;)
+
+.EXAMPLE
+
+I currently get scan arguments from the environment since they are passwords etc..
+This is a very early version still some rough edges
+
+PS > .\Test-AllVirtualMemory.ps1
+
+Way below the 3 environment variables to set are;
+
+REMOTE_HOST (target to scan)
+USER_NAME (a user that has admin on the target)
+PASS_WORD (that user's password)
+
+$serverName = [Environment]::GetEnvironmentVariable("REMOTE_HOST")
+$username = [Environment]::GetEnvironmentVariable("USER_NAME")
+$password = [Environment]::GetEnvironmentVariable("PASS_WORD")
+
+#>
+
 $block =
 {
 	Set-StrictMode -Version 3
