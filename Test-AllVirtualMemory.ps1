@@ -941,26 +941,34 @@ $testCred = (New-Object System.Management.Automation.PSCredential($username, $ad
 $ArrayList = New-Object -TypeName 'System.Collections.ArrayList';
 $s = New-PSSession -ComputerName Server16 -Credential $testCred
 $job = Invoke-Command -Session $s -ScriptBlock $block -AsJob
-$output = Receive-Job -Job $job
 
-foreach ($o in $output)
+do
 {
-	#send web request for hash validation
-	$content = Invoke-WebRequest -Uri $uri -Method POST -Body $o -ContentType "application/json" -UseBasicParsing | Select-Object Content
-	
-	#decode back to PS 
-	$rv = [Newtonsoft.Json.JsonConvert]::DeserializeObject($content.Content, $type)
-	
-	$hashAction = [pscustomobject]@{
-		Test	   = $o
-		Result	   = $rv
-	}
-	[void]$ArrayList.Add($hashAction)
-	if (($ArrayList.Count % 100) -eq 0)
+	$output = Receive-Job -Job $job
+	foreach ($o in $output)
 	{
-		Write-Host "Result count: " + $ArrayList.Count
+		#send web request for hash validation
+		$content = Invoke-WebRequest -Uri $uri -Method POST -Body $o -ContentType "application/json" -UseBasicParsing | Select-Object Content
+		
+		#decode back to PS 
+		$rv = [Newtonsoft.Json.JsonConvert]::DeserializeObject($content.Content, $type)
+		
+		$hashAction = [pscustomobject]@{
+			Test	   = $o
+			Result	   = $rv
+		}
+		[void]$ArrayList.Add($hashAction)
+		if (($ArrayList.Count % 100) -eq 0)
+		{
+			Write-Host "Result count: " + $ArrayList.Count
+		}
 	}
+	Start-Sleep -Seconds 5
 }
+while ($job.State -eq "Running")
+
+Write-Host "Done. Collected " + $ArrayList.Count + " results."
+
 
 Write-Host "Done. Collected " + $ArrayList.Count + " results."
 
