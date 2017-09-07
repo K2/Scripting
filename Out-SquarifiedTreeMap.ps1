@@ -653,7 +653,7 @@ Function Out-SquarifiedTreeMap
 					$Script:Result = $DataHash.TreeMapData | Where {
 						$_.Tag -eq $Source.Tag
 					} | Select-Object -ExpandProperty ObjectData
-					Out-SquarifiedTreeMap -InputObject $Script:Result.Children -Verbose -Width 1200 -Height 1024 -DataProperty Size -HeatmapProperty Heat -LabelProperty Label -ShowLabel {"$($This.ObjectData.Label)"}  | Show-UI 
+					Out-SquarifiedTreeMap -InputObject $Script:Result.Children -Width 1200 -Height 1024 -DataProperty Size -HeatmapProperty Heat -LabelProperty Label -ShowLabel {"$($This.ObjectData.Label)"}  | Show-UI 
 				}
 			})
 		

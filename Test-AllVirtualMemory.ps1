@@ -1,4 +1,4 @@
-<#
+﻿<#
 	.SYNOPSIS
 		Get Hash values from process memory.  This script will remotly scan the CODE virtual memory of the target system
 		and perform SHA256 hash against each PAGE of memory.  It identifies shared code pages and only scan's shared pages
@@ -36,7 +36,8 @@
 	
 	.PARAMETER ProcNameGlob
 		A description of the ProcNameGlob parameter.
-	
+	.PARAMETER GUIObject
+		Show a UI of the results
 	.EXAMPLE
 		I currently get scan arguments from the environment since they are passwords etc..
 		This is a very early version still some rough edges
@@ -62,7 +63,8 @@ param
 	[String]$TargetHost = "",
 	[String]$aUserName = $env:UserName,
 	[String]$aPassWord = "",
-	[String]$ProcNameGlob = ""
+	[String]$ProcNameGlob = "",
+	[Switch]$GUIOutput
 )
 # if envronment is set use it, otherwise cmd line
 $serverName = [Environment]::GetEnvironmentVariable("REMOTE_HOST")
@@ -952,12 +954,10 @@ $compileParams.GenerateInMemory = $True
 [void]$codeProvider.CompileAssemblyFromSource($compileParams, $code2)
 Add-Type -TypeDefinition $code2 -Language CSharp
 
-$something = "explorer.exe"
-
 $uri = "https://pdb2json.azurewebsites.net/api/PageHash/x"
 $ArrayList = New-Object -TypeName 'System.Collections.ArrayList'; 
 $s = New-PSSession -ComputerName $serverName -Credential $testCred 
-$job = Invoke-Command -Session $s -ScriptBlock ${function:blockfun} -ArgumentList @($something) -Args $something -AsJob 
+$job = Invoke-Command -Session $s -ScriptBlock ${function:blockfun} -ArgumentList $ProcNameGlob -AsJob 
 
 do
 {
@@ -987,12 +987,13 @@ while ($job.State -eq "Running")
 
 Write-Host "Done. Collected " + $ArrayList.Count + " results."
 
+
 foreach ($item in $ArrayList)
 {
 	$itemX = $item.Test | ConvertFrom-Json
 	$ProcessName = $itemX.ProcessName
 	$Module = [System.IO.Path]::GetFileName($itemX.ModuleName)
-	$Name = $Process + [System.Environment]::NewLine + $Module
+	$Name = $ProcessName + " : " + $Module
 	$Size = $itemX.Size
 	$checkedBlocks = $itemX.HashedBlocks
 	$validatedBlocks = 0
@@ -1005,7 +1006,9 @@ foreach ($item in $ArrayList)
 	}
 	$percentValid = $validatedBlocks * 100.0 / $checkedBlocks
 	$Heat = 100.0 - $percentValid
-
+	Add-Member -NotePropertyName Children -NotePropertyValue $itemX.HashSet -InputObject $item
+    Add-Member -NotePropertyName Struct -NotePropertyValue $itemX -InputObject $item
+    Add-Member -NotePropertyName Id -NotePropertyValue $itemX.Id -InputObject $item
 	Add-Member -NotePropertyName Heat -NotePropertyValue $Heat -InputObject $item
 	Add-Member -NotePropertyName PercentValid -NotePropertyValue $percentValid -InputObject $item
 	Add-Member -NotePropertyName ProcessName -NotePropertyValue $ProcessName -InputObject $item
@@ -1016,14 +1019,89 @@ foreach ($item in $ArrayList)
 	Add-Member -NotePropertyName TotalValidated -NotePropertyValue $validatedBlocks -InputObject $item
 }
 
-. .\Out-SquarifiedTreeMapUI.ps1
 
-$Tooltip = {
-@"
-Module <DLL>:   $($This.LabelProperty) <$($This.ObjectData.module)>     
-Percent Validated (%): $($percentValid))
-"@
+
+if($GUIOutput -eq $true) {
+	#Customized version of TreeMap
+	. .\Out-SquarifiedTreeMap.ps1
+
+	#Build hierarchical view of processes
+	$d = New-Object 'system.collections.generic.dictionary[string,pscustomobject]'
+
+	foreach ($item in $ArrayList)
+	{
+		if($d.ContainsKey($item.Id))
+		{
+			$i = $d[$item.Id]
+
+			$i.TotalChecked += $item.TotalChecked
+			$i.TotalValidated += $item.TotalValidated
+			$i.Size += $item.Size
+
+			$i.PercentValid = $i.TotalValidated * 100.0 / $i.TotalChecked
+			$i.Heat = 100.0 - $i.PercentValid
+
+			[void]$i.Modules.Add($item)
+
+		} else {
+			
+			$Process = [pscustomobject]@{
+				Name   = $item.ProcessName
+				ID	   = $item.Id
+				TotalChecked = $item.TotalChecked
+				TotalValidated = $item.TotalValidated
+				Size 	= $item.Size
+				PercentValid = $item.TotalValidated * 100.0 / $item.TotalChecked
+				Heat = 100.0 - ($item.TotalValidated * 100.0 / $item.TotalChecked)
+
+				Modules = New-Object -TypeName 'System.Collections.ArrayList'; 
+			}
+			[void]$Process.Modules.Add($item)
+
+			[void]$d.Add($item.Id, $Process)
+		}
+	}
+
+#Organize them for the UI
+
+	$Procs  = [pscustomobject]@{
+			Label = "ALL PROCS"
+			Children  = $d.Values
+	}
+	foreach($p in $d.Values) {
+		$Label = "PROC " + $p.Name + " " + $p.ID
+		Add-Member -Force -NotePropertyName Children -NotePropertyValue $p.Modules -InputObject $p
+		Add-Member -Force -NotePropertyName Label -NotePropertyValue $Label -InputObject $p
+		foreach($module in $p.Modules) 
+		{
+			$Children  = New-Object -TypeName 'System.Collections.ArrayList'; 
+			$ModLabel = "MODULE " + $module.Module + " " + $module.Struct.BaseAddress.ToString("x")
+			foreach($hash in $module.Struct.HashSet) 
+			{
+				$aHeat = 100.0
+				foreach($r in $module.Result)
+				{
+					if($r.Address -eq $hash.Address)
+					{
+						if($r.HashCheckEquivalant -eq "True")
+						{
+							$aHeat = 0.0
+						}
+						break;
+					}
+				}
+				$block = [pscustomobject]@{
+					Label = "BLOCK " + $hash.Address.ToString("x")
+					Size = 4096
+					Children  = New-Object -TypeName 'System.Collections.ArrayList'
+				}
+				Add-Member -Force -NotePropertyName Heat -NotePropertyValue $aHeat -InputObject $block
+				[void]$Children.Add($block)					
+			}
+
+			Add-Member -Force -NotePropertyName Children -NotePropertyValue $Children -InputObject $module
+			Add-Member -Force -NotePropertyName Label -NotePropertyValue $ModLabel -InputObject $module
+		}
+	}
+	$Procs.Children | Out-SquarifiedTreeMap -Width 1200 -Height 1000 -DataProperty Size -HeatmapProperty Heat -LabelProperty Label -ShowLabel {"$($This.LabelProperty)"} 
 }
-$ArrayList | Out-SquarifiedTreeMap -Width 1200 -Height 1000 -DataProperty Size -HeatmapProperty Heat -LabelProperty Name -Tooltip $Tooltip
-
-#-PassThru -ShowLabel { "$($This.LabelProperty) <$($This.ObjectData.module)>" } 

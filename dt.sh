@@ -96,9 +96,9 @@ IMAGE_VIRTUALSIZE=`echo "obase=16; ((($THEADDR+$THESIZE+4096)/4096)*4096)"|bc`
 TIME_DATE_STAMP=`$LLVMREADOBJ $input_file -coff-debug-directory|grep -i date|tail -1|cut -f 2 -d \(|tr -d \)`
 
 #yeah we call llvm many times oh well ;)
-PDBFILENAME=`$LLVMREADOBJ --coff-debug-directory $input_file|grep PDBFileName|cut -f 2 -d :|tr -d " "`
-PDBAGE=`$LLVMREADOBJ --coff-debug-directory $input_file|grep PDBAge|cut -f 2 -d :|tr -d " "`
-PDBGUIDNFO=`$LLVMREADOBJ -coff-debug-directory $input_file|grep PDBGUID`
+PDBFILENAME=`$LLVMREADOBJ --coff-debug-directory $input_file|grep PDBFileName|cut -f 2 -d :|tr -d " "|head -1`
+PDBAGE=`$LLVMREADOBJ --coff-debug-directory $input_file|grep PDBAge|cut -f 2 -d :|tr -d " "|head -1`
+PDBGUIDNFO=`$LLVMREADOBJ -coff-debug-directory $input_file|grep PDBGUID|head -1`
 GUIDTRIM=`echo $PDBGUIDNFO|cut -d : -f 2|tr -d \( |tr -d \)`
 GUIDLEN=`echo $GUIDTRIM|wc -w`
 #these need to be reversed 
