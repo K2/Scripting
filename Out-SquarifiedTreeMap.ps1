@@ -629,9 +629,11 @@ Function Out-SquarifiedTreeMap
             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
             x:Name="Window" 
-            Width = "$($DataHash.Width)" Height = "$($DataHash.Height)" 
-            >    
-			<Canvas x:Name="Canvas" />
+			>
+			<Viewbox >
+				<Canvas MinWidth = "$($DataHash.Width)" MinHeight = "$($DataHash.Height)" 
+				x:Name="Canvas" />
+			</Viewbox>
         </UserControl>
 "@
 		#endregion XAML
@@ -653,7 +655,7 @@ Function Out-SquarifiedTreeMap
 					$Script:Result = $DataHash.TreeMapData | Where {
 						$_.Tag -eq $Source.Tag
 					} | Select-Object -ExpandProperty ObjectData
-					Out-SquarifiedTreeMap -InputObject $Script:Result.Children -Width 1200 -Height 1024 -DataProperty Size -HeatmapProperty Heat -LabelProperty Label -ShowLabel {"$($This.ObjectData.Label)"}  | Show-UI 
+					Out-SquarifiedTreeMap -InputObject $Script:Result.Children -Width $Width -Height $Height -DataProperty Size -HeatmapProperty Heat -LabelProperty Label -ShowLabel {"$($This.ObjectData.Label)"}  | Show-UI 
 				}
 			})
 		
