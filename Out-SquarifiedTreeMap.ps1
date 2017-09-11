@@ -65,8 +65,8 @@ Function Out-SquarifiedTreeMap
         Width
         Height
         Coordinate
-        ObjectData (This contains the object that was passed to this function)
-    
+		ObjectData (This contains the object that was passed to this function)
+		
     .PARAMETER PassThru
         Allows you to select a single item on the treemap that will close out the UI and output the corresponding
         original object based on the selected item for use with another command.
@@ -463,6 +463,9 @@ Function Out-SquarifiedTreeMap
 		Function Color
 		{
 			Param ($Decimal)
+			if($Decimal -eq 0.0) {
+				Return ([windows.media.color]::FromRgb(0, 0, 255)).ToString()
+			} 
 			If ($Decimal -gt 1)
 			{
 				$Decimal = 1
@@ -651,11 +654,19 @@ Function Out-SquarifiedTreeMap
 				Write-Verbose "[IsPassThru] $($Script:IsPassThru)"
 				If ($_.OriginalSource -is [System.Windows.Shapes.Rectangle])
 				{
+					$Tooltip = {
+@"
+Name = $($This.LabelProperty)
+FullName = $($This.ObjectData.FullName)
+PercentValid = $($This.ObjectData.PercentValid)
+Size = $($This.ObjectData.Size) 
+"@
+}
 					$Source = $_.OriginalSource
 					$Script:Result = $DataHash.TreeMapData | Where {
 						$_.Tag -eq $Source.Tag
 					} | Select-Object -ExpandProperty ObjectData
-					Out-SquarifiedTreeMap -InputObject $Script:Result.Children -Width $Width -Height $Height -DataProperty Size -HeatmapProperty Heat -LabelProperty Label -ShowLabel {"$($This.ObjectData.Label)"}  | Show-UI 
+					Out-SquarifiedTreeMap -InputObject $Script:Result.Children -Width $Width -Height $Height -DataProperty Size -HeatmapProperty Heat -MaxHeatMapSize 1.0 -LabelProperty Label -ToolTip $Tooltip -ShowLabel {"$($This.ObjectData.Label)"}  | Show-UI
 				}
 			})
 		
@@ -755,7 +766,6 @@ HeatMap: $($This.HeatmapProperty)
 		#Show UI
 		Write-Verbose "[END] Show UI"
 		$Window | Show-Window
-		#[void]$Window.ShowDialog()
 		Write-Verbose "[END] UI Close"
 		If ($IsPassThru)
 		{
