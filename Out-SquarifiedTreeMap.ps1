@@ -667,7 +667,7 @@ Size = $($This.ObjectData.Size)
 						$_.Tag -eq $Source.Tag
 					} | Select-Object -ExpandProperty ObjectData
 					Out-SquarifiedTreeMap -InputObject $Script:Result.Children -Width $Width -Height $Height -DataProperty Size -HeatmapProperty Heat -MaxHeatMapSize 1.0 -LabelProperty Label -ToolTip $Tooltip -ShowLabel {"$($This.ObjectData.Label)"}  | Show-UI
-				}
+					}
 			})
 		
 		#region TabControl event handler
@@ -765,7 +765,7 @@ HeatMap: $($This.HeatmapProperty)
 		
 		#Show UI
 		Write-Verbose "[END] Show UI"
-		$Window | Show-Window
+		$Window 
 		Write-Verbose "[END] UI Close"
 		If ($IsPassThru)
 		{
