@@ -1,7 +1,5 @@
-﻿Import-Module ShowUI
-
-Function Out-SquarifiedTreeMap
-{
+﻿Function Out-SquarifiedTreeMap
+{	
     <#
     .SYNOPSIS
         Used to present a Squarified Treemap and optional heatmap for visualizing data.
@@ -167,6 +165,8 @@ Function Out-SquarifiedTreeMap
 	)
 	Begin
 	{
+		Import-Module ShowUI
+
 		Write-Verbose "[BEGIN]Starting Function"
 		#region Helper Functions        
 		Function New-SquareTreeMapData
@@ -647,6 +647,53 @@ Function Out-SquarifiedTreeMap
 		$xaml.SelectNodes("//*[@*[contains(translate(name(.),'n','N'),'Name')]]") | ForEach {
 			New-Variable -Name $_.Name -Value $Window.FindName($_.Name) -Force -ErrorAction SilentlyContinue -Scope Script
 		}
+		$Window.Add_MouseRightButtonDown({
+			If ($_.OriginalSource -is [System.Windows.Shapes.Rectangle])
+			{
+
+				$Source = $_.OriginalSource
+				$Script:Result = $DataHash.TreeMapData | Where {
+					$_.Tag -eq $Source.Tag
+				} | Select-Object -ExpandProperty ObjectData
+
+				$Script:Result | Write-Verbose 
+
+				Write-Verbose "Loading remote memory with call to Get-ProcessMemory -s $s -ID $($Script:Result.Id) -Address $($Script:Result.BaseAddress) -Length $($Script:Result.Size) "
+				# load memory into a file
+				$addr_hdr = $Script:Result.BaseAddress-4096
+				$Size_hdr = $Script:Result.Size+4096
+
+				$RemoteMem = Get-ProcessMemory -s $s -ID $Script:Result.Id -Address $addr_hdr -Length $Size_hdr
+				Write-Verbose "RemoteMemoryRead of $($RemoteMem.Length) bytes"
+				$MemTemp = [System.IO.Path]::GetTempFileName()
+				Write-Verbose "Temp file for remote memory is $MemTemp"
+				[System.IO.File]::WriteAllBytes($MemTemp, $RemoteMem)
+				$infoMem = "ProcessID: $($Script:Result.Id) Address: $($addr_hdr.ToString(""x"")) Length: $($Size_hdr.ToString(""x"")) temp: $($MemTemp)"
+				
+				# query pagehash server for it's interpretation of the same block
+				$goldTmp = [System.IO.Path]::GetTempFileName()
+				Write-Verbose "Temp file for golden image is $goldTmp"
+				Write-Verbose "Get-GoldenImage -file $($Script:Result.ModuleName) -mapped $($Script:Result.BaseAddress) -writeOut $goldTmp"
+				Get-GoldenImage -file $Script:Result.ModuleName -mapped $Script:Result.BaseAddress -writeOut $goldTmp
+				Write-Verbose "Attempting Invoke-Command -ScriptBlock { Get-BinDiff $($argS[0]) $($argS[1]) } -ArgS $MemTemp $goldTmp"
+				$infoGold = "ModuleName: $($Script:Result.ModuleName) temp: $($goldTmp))"
+
+				if((([System.IO.FileInfo]$MemTemp).Length -gt 0) -and (([System.IO.FileInfo]$goldTmp).Length -gt 0)) {
+
+					# I'm still new to PS and this thing was annoying
+					# for some reason the right click (I think since it's a new Window the dispatcher is getting pissed off)
+					# anyhow
+
+					#Slow method with FlowDocument
+					#$cmd = "Import-Module .\Test-AllVirtualMemory.ps1; Get-BinDiff $MemTemp $goldTmp $infoMem $infoGold -Verbose "
+					$cmd = "Add-Type -AssemblyName PresentationFramework; import-module showui; Import-Module .\Test-AllVirtualMemory.ps1; Get-FastBinDiff $MemTemp $goldTmp $addr_hdr"
+					Write-Verbose "Attempting: $cmd"
+					[System.Diagnostics.Process]::Start("powershell.exe",  $cmd) 
+
+					#Invoke-Command -ScriptBlock { 	Get-BinDiff $argS[0] $argS[1] } -ArgS $MemTemp $goldTmp
+				}
+			}
+		})
 		#endregion Connect to Control 
 		$Window.Add_MouseLeftButtonDown({
 				$Script:KeyDown = [System.Windows.Input.Keyboard]::IsKeyDown("RightCtrl") -OR [System.Windows.Input.Keyboard]::IsKeyDown("LeftCtrl")
@@ -666,53 +713,11 @@ Size = $($This.ObjectData.Size)
 					$Script:Result = $DataHash.TreeMapData | Where {
 						$_.Tag -eq $Source.Tag
 					} | Select-Object -ExpandProperty ObjectData
-					Out-SquarifiedTreeMap -InputObject $Script:Result.Children -Width $Width -Height $Height -DataProperty Size -HeatmapProperty Heat -MaxHeatMapSize 1.0 -LabelProperty Label -ToolTip $Tooltip -ShowLabel {"$($This.ObjectData.Label)"}  | Show-UI
-					}
-			})
-		
-		#region TabControl event handler
-		<# 
-		#region Control Events
-		$Window.Add_MouseRightButtonUp({
-				$This.close()
-			})
-		[System.Windows.RoutedEventHandler]$Global:RectangleKeyDownChangeHandler = {
-			Write-Verbose "[KeyDwnhandler-CTRLKeyDown] $($Script:KeyDown)"
-			If ($Script:KeyDown)
-			{
-				Try
-				{
-					Write-Verbose "[KEYUP] DragMove"
-					$Window.DragMove()
+					
+					Out-SquarifiedTreeMap -InputObject $Script:Result.Children -Width $Width -Height $Height -DataProperty Size -HeatmapProperty Heat -MaxHeatMapSize 1.0 -LabelProperty Label -ToolTip $Tooltip -ShowLabel {"$($This.ObjectData.Label)"} | Show-UI
 				}
-				Catch { }
-			}
-		}
-		$Window.AddHandler([System.Windows.Shapes.Rectangle]::MouseLeftButtonUpEvent, $RectangleKeyDownChangeHandler)
-		
-		[System.Windows.RoutedEventHandler]$Global:RectangleKeyUpChangeHandler = {
-			If (-NOT $Script:KeyDown)
-			{
-				If ($_.OriginalSource -is [System.Windows.Shapes.Rectangle])
-				{
-					$Source = $_.OriginalSource
-					$Script:Result = $DataHash.TreeMapData | Where {
-						$_.Tag -eq $Source.Tag
-					} | Select-Object -ExpandProperty ObjectData
-					#$Canvas.Children.Clear()
-					#New-SquareTreeMapData -InputObject $Script:Result 
-					Show-UI Out-SquarifiedTreeMap -InputObject $Script:Result.Children -Verbose -Width 600 -Height 200 -DataProperty Count -HeatmapProperty Data -LabelProperty Label  
-					#$Canvas.InvalidateVisual()
-					#$Window.Close()
-				}
-			}
-		} 
-		$Window.AddHandler([System.Windows.Shapes.Rectangle]::MouseLeftButtonUpEvent, $RectangleKeyUpChangeHandler)
-		#>
-		#endregion TabControl event handler
-		#endregion Control Events
-		
-		#region Begin building the Squarified Tree Map
+			})
+
 		$DataHash.TreeMapData | ForEach {
 			$This = $_
 			If ($DataHash.ContainsKey('HeatmapProperty'))
@@ -742,8 +747,6 @@ HeatMap: $($This.HeatmapProperty)
 			}
 			Else
 			{
-				#Scope gets weird after setting the variable in a new runspace so we 
-				#need to update the scriptblock -- Might not be needed after removing runspaces
 				$ToolTip = [scriptblock]::Create($DataHash.ToolTip.ToString())
 				$__Tooltip = $ToolTip.Invoke() | Out-String
 			}
@@ -761,8 +764,6 @@ HeatMap: $($This.HeatmapProperty)
 				[System.Windows.Controls.Canvas]::SetTop($Viewbox, $_.Coordinate.Y)
 			}
 		}
-		#endregion Begin building the Squarified Tree Map
-		
 		#Show UI
 		Write-Verbose "[END] Show UI"
 		$Window 

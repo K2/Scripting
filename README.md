@@ -1,6 +1,25 @@
 # Scripting
 PS / Bash / Other scripts For FUN!
 
+# Using the HashServer 
+
+When combined with a local HashServer. Test-AllVirtualMemory.ps1 will give you a binary hex diff view of memory artifacts and also the capability of validating custom software that is not in the public repository.
+
+Currently you just have to override HashServerUri to point to you're local HashSever to validate results against it and to enable the hex view/diffing.  (right click on a module in the TreeMap to see that).
+
+
+## Bug/workaround
+Right now there is a bug in the PS code, you need to run these lines as a workaround for now;
+
+```ps
+Add-Type -AssemblyName PresentationFramework 
+Add-Type -AssemblyName PresentationCore
+Import-Module ShowUI
+```
+
+This will allow the GUI to function properly.
+
+
 ## dt.sh 
 ### Extract JSON symbol information from network database (allows for analyzing MS binaries from Linux or OSX cake)
 ```bash

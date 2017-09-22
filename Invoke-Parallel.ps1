@@ -246,7 +246,7 @@ function Invoke-Parallel {
                     $more = $false
 
                     #Progress bar if we have inputobject count (bound parameter)
-                    if (-not $Quiet) {
+                    if (-not $Quiet -and $totalCount -gt 1) {
                         Write-Progress  -Activity "Running Query" -Status "Starting threads"`
                             -CurrentOperation "$startedCount threads defined - $totalCount input objects - $script:completedCount input objects processed"`
                             -PercentComplete $( Try { $script:completedCount / $totalCount * 100 } Catch {0} )
