@@ -467,7 +467,7 @@ class FrameE : System.Windows.FrameworkElement {
 <#
 	.SYNOPSIS
         Display a side-by-side hex dump with some syntax highlighting to indicate
-        where diffferences occur (line based)
+        where diffferences occur (8 bits granularity)
         
         To do this in a relativly more cool way you need to use FormattedText and 
         not a FlowDocument so I simply colorize by line since the perf impact isnt
@@ -535,6 +535,8 @@ Function Get-FastBinDiff
         $minMaxLen = $maxlen2
     }
 
+    Set-Variable -Name minMaxLen -Value $minMaxLen -Scope Global
+
     $btnBack = [System.Windows.Media.Brushes]::DarkCyan
     $btnFore = [System.Windows.Media.Brushes]::Snow
 
@@ -566,15 +568,18 @@ Function Get-FastBinDiff
             New-TextBlock -Row 1 -Text $infoFile2 -HorizontalAlignment Right -TextAlignment Right  -Background $btnBack -Foreground $btnFore 
             New-StackPanel -Orientation Horizontal -Children {
                 New-Button "Load Entire File" -IsDefault -VerticalContentAlignment Stretch -Background $btnBack -Foreground $btnFore -On_Click {
-                    do {
+                    $curr = $frameL.offset
+                    for($curr = $frameL.offset; $curr -lt $Global:minMaxLen; $curr += 0x1000) 
+                    {
                         $FrameL.FilePageOffset($FrameL.offset)
                         $FrameR.FilePageOffset($FrameR.offset)
                         
                         $FrameL.DiffOther($FrameR.buff)
                         $FrameR.DiffOther($FrameL.buff)
-                        $CanvasContainer.Height = $FrameL.ActualHeight 
+                    } 
 
-                    } while($FrameL.offset -lt $minMaxLen)
+                    $CanvasContainer.Height = $FrameL.ActualHeight 
+                    
                 }
                 New-Button "Load Next Page" -IsDefault -VerticalContentAlignment Stretch -Background $btnBack -Foreground $btnFore -On_Click {
                     $FrameL.FilePageOffset($FrameL.offset)
