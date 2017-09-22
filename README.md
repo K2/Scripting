@@ -1,13 +1,18 @@
 # Scripting
 PS / Bash / Other scripts For FUN!
 
-<<<<<<< HEAD
 # Using the HashServer 
+
+You can now validate software locally.  There is NO database, all the memory integrity validation is just in time, the server uses the relocation information from the client to calculate the SHA256 hash validation per-page and reports on the adjusted value.  This dramatically lowers the TCO / administrative overhead over traditional golden-image type integrity checking.
 
 When combined with a local HashServer. Test-AllVirtualMemory.ps1 will give you a binary hex diff view of memory artifacts and also the capability of validating custom software that is not in the public repository.
 
 Currently you just have to override HashServerUri to point to you're local HashSever to validate results against it and to enable the hex view/diffing.  (right click on a module in the TreeMap to see that).
 
+## GUI
+Left click into the TreeView, Right Click a module to get the hex-diff view
+
+![Verification of memory output](https://raw.githubusercontent.com/K2/Scripting/master/BinaryDiffView.jpg)
 
 ## Bug/workaround
 Right now there is a bug in the PS code, you need to run these lines as a workaround for now;
@@ -30,7 +35,7 @@ Only hash values of mapped code sections are transmitted in JSON.
 * 64bit & wow64 (32 on 64) support/tested
 
 Updates are fast & furious please check back for fixes, new features, golden set's and anything else.
->>>>>>> 4a548dbf43b3142f47baf215425cac03eb454cd2
+
 
 ## dt.sh 
 ### Extract JSON symbol information from network database (allows for analyzing MS binaries from Linux or OSX cake)
