@@ -12,6 +12,15 @@ Currently you just have to override HashServerUri to point to you're local HashS
 ## GUI
 Left click into the TreeView, Right Click a module to get the hex-diff view
 
+The performance difference between coding to the Document interfaces and lower layer TextRendering on WPF is pretty astounding.  It's also impressive that PowerShell can be involved in the render pass from the UI. I left the first implmentation of the DiffView enable feel free to investigate the differences. 
+
+```ps
+Add-Type -AssemblyName PresentationFramework 
+Get-FastBinDiff c:\temp\mem_ctf.bin C:\windows\system32\msctf.dll
+Get-BinDiff c:\temp\mem_ctf.bin C:\windows\system32\msctf.dll
+```
+
+
 ![Verification of memory output](https://raw.githubusercontent.com/K2/Scripting/master/BinaryDiffView.jpg)
 
 ## Bug/workaround
