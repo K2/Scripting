@@ -5,11 +5,13 @@ Add-Type -AssemblyName PresentationCore
 Import-Module ShowUI
 
 #The Internet server does not serve binaries, only local
-$HashServerUri = "https://pdb2json.azurewebsites.net/api/PageHash/x"
+# If you don't want to run a HashServer locally, set;
+#$HashServerUri = $gRoot
+$gRoot = "https://pdb2json.azurewebsites.net/api/PageHash/x"
 #$HashServerUri = "http://localhost:7071/api/PageHash/x"
 
 # Set this to you're local HashServer to get the memory diffing
-#$HashServerUri = "http://localhost:3342/api/PageHash/x"
+$HashServerUri = "http://localhost:3342/api/PageHash/x"
 
 
 Function Get-FilePageOffset
@@ -556,7 +558,7 @@ Function Get-FastBinDiff
 
     New-Window -WindowState Normal -WindowStartupLocation Manual -Background Black -UseLayoutRounding -SizeToContent WidthAndHeight -Content  {
         New-Grid -Rows ('Auto', 'Auto', '*') -VerticalAlignment Stretch -HorizontalAlignment Stretch -Children {
-            New-ScrollViewer -MinHeight 100 -Row 2 -Content {
+            New-ScrollViewer -Name Scroller -MinHeight 100 -Row 2 -Content {
                 New-ViewBox -StretchDirection Both -Stretch Fill -Child {
                     New-Canvas -Name CanvasContainer -Width $w -Height $h { 
                         $FrameL,
@@ -576,9 +578,14 @@ Function Get-FastBinDiff
                         
                         $FrameL.DiffOther($FrameR.buff)
                         $FrameR.DiffOther($FrameL.buff)
-                    } 
 
-                    $CanvasContainer.Height = $FrameL.ActualHeight 
+                        $CanvasContainer.UpdateLayout()
+
+                        #not sure why this isnt updating the visual yet
+                        $CanvasContainer.Height = $FrameL.ActualHeight 
+                        $Scroller.ScrollToBottom()
+                    } 
+                    
                     
                 }
                 New-Button "Load Next Page" -IsDefault -VerticalContentAlignment Stretch -Background $btnBack -Foreground $btnFore -On_Click {
