@@ -9,9 +9,9 @@ Import-Module ShowUI
 #$HashServerUri = $gRoot
 $gRoot = "https://pdb2json.azurewebsites.net/api/PageHash/x"
 #$HashServerUri = "http://localhost:7071/api/PageHash/x"
-
+#$HashServerUri = $gRoot
 # Set this to you're local HashServer to get the memory diffing
-$HashServerUri = "http://localhost:3342/api/PageHash/x"
+$HashServerUri = "http://10.0.0.118:3342/api/PageHash/x"
 
 
 Function Get-FilePageOffset
@@ -1974,7 +1974,7 @@ $Code                                        = @"
 
         $itemX                 =  $item.Test | ConvertFrom-Json
         $ProcessName           =  $itemX.ProcessName
-        $item.Test             =  ""
+        $item.Test             =  $item.Test
         
         if(![string]::IsNullOrWhiteSpace($itemX.ModuleName) -and $itemX.ModuleName.Contains([System.IO.Path]::DirectorySeparatorChar)) {
             $Module = Remove-InvalidFileNameChars($itemX.ModuleName.Split([System.IO.Path]::DirectorySeparatorChar)|Select-Object -Last 1)
@@ -2136,7 +2136,7 @@ Size = $($This.ObjectData.Size)
 "@
         }
 
-        Out-SquarifiedTreeMap -InputObject $d.Values -Width 1024 -Height 768 -DataProperty Size -HeatmapProperty Heat -MaxHeatMapSize 1.0 -LabelProperty Label -Tooltip $Tooltip -ShowLabel {"$($This.LabelProperty)"} |Show-UI
+        Out-SquarifiedTreeMap -Verbose -InputObject $d.Values -Width 1024 -Height 768 -DataProperty Size -HeatmapProperty Heat -MaxHeatMapSize 1.0 -LabelProperty Label -Tooltip $Tooltip -ShowLabel {"$($This.LabelProperty)"} |Show-UI
     }
 
     if(!$Persist) {
