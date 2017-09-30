@@ -686,7 +686,7 @@
 
 					#Slow method with FlowDocument
 					#$cmd = "Import-Module .\Test-AllVirtualMemory.ps1; Get-BinDiff $MemTemp $goldTmp $infoMem $infoGold -Verbose "
-					$cmd = "Add-Type -AssemblyName PresentationFramework; import-module showui; Import-Module .\Test-AllVirtualMemory.ps1; Get-FastBinDiff $MemTemp $goldTmp $addr_hdr -Verbose"
+					$cmd = "Add-Type -AssemblyName PresentationFramework; import-module showui; Import-Module .\Test-AllVirtualMemory.ps1; Get-FastBinDiff $MemTemp $goldTmp $addr_hdr"
 					Write-Verbose "Attempting: $cmd"
 					[System.Diagnostics.Process]::Start("powershell.exe",  $cmd) 
 

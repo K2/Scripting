@@ -2136,7 +2136,7 @@ Size = $($This.ObjectData.Size)
 "@
         }
 
-        Out-SquarifiedTreeMap -Verbose -InputObject $d.Values -Width 1024 -Height 768 -DataProperty Size -HeatmapProperty Heat -MaxHeatMapSize 1.0 -LabelProperty Label -Tooltip $Tooltip -ShowLabel {"$($This.LabelProperty)"} |Show-UI
+        Out-SquarifiedTreeMap -InputObject $d.Values -Width 1024 -Height 768 -DataProperty Size -HeatmapProperty Heat -MaxHeatMapSize 1.0 -LabelProperty Label -Tooltip $Tooltip -ShowLabel {"$($This.LabelProperty)"} |Show-UI
     }
 
     if(!$Persist) {
