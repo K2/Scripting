@@ -168,7 +168,7 @@ requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json
                 yield r
 
     def render_text(self, outfd, data):
-        outfd.write("pdb2json JIT PageHash calls under way...  (endpoint is " + self.JITHashServer + ")
+        outfd.write("pdb2json JIT PageHash calls under way...  (endpoint is " + self.JITHashServer + ")")
         for r in data:
             #Isolate some context from the request so the output makes a little sense
             idx = r.request.body.find("ModuleName")+11
@@ -176,5 +176,10 @@ requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json
             info = r.request.body[idx:idx+idx_end]
 
             outfd.write("Request info for module" + info + "\n")
-            for x in r.json():
-                print (str(hex(x["Address"])) + " was verified SHA256? " + str(x["HashCheckEquivalant"]))
+            if r.text is not None:
+                try:
+                    responses=r.json()
+                    for x in responses:
+                        print (str(hex(x["Address"])) + " was verified SHA256? " + str(x["HashCheckEquivalant"]))
+                except ValueError:
+                    outfd.write("server had no data, some binaries are not in the database. Feel free to drop us a line on what ones are missing.")
