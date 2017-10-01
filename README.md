@@ -1,7 +1,7 @@
 # Scripting
 PS / Bash / Pyton / Other scripts For FUN!
 
-# Volatility plugin
+# Volatility [plugin](https://github.com/K2/Scripting/blob/master/inVteroJitHash.py)
 
 Expanding to other platforms is now super easy.  The minimum protocol format is as follows;
 
