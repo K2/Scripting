@@ -39,7 +39,9 @@
 import volatility.commands as commands
 import volatility.utils as utils
 import volatility.win32.tasks as tasks
+import time
 import base64
+import sys
 import requests
 from Crypto.Hash import SHA256
 
@@ -47,7 +49,8 @@ class inVteroJitHash(commands.Command):
     """Use the public free inVtero JIT Page hash server to respond with integrity information"""
     #"http://Zammey:3342/api/PageHash/x"
     JITHashServer = "https://pdb2json.azurewebsites.net/api/PageHash/x"
-
+    StatsOutput = True
+    StartTime = time.time()
     def __init__(self, config, *args, **kwargs):
         commands.Command.__init__(self, config, *args)
         
@@ -133,15 +136,21 @@ requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json
 
     def HashPage(self, data):
         sha = SHA256.new()
+        if data is None:
+            return "NULL INPUT"
         sha.update(data)
         return base64.b64encode(sha.digest())
 
     def calculate(self):
+        StartTime = time.time()
         addr_space = utils.load_as(self._config)
         tasklist = []
         modslist = []
         tasklist = [t for t in tasks.pslist(addr_space)]
+        taski = 0
         for task in tasklist:
+            taski += 1
+            print("\nScanning: " + task.ImageFileName + "(" + str(taski) + " of " + str(tasklist.__len__()) + ")\n")
             proc_as = task.get_process_address_space()
             for mod in task.get_load_modules():
                 hashAddr = []
@@ -168,18 +177,48 @@ requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json
                 yield r
 
     def render_text(self, outfd, data):
+        VirtualBlocksChecked = 0
+        VBValidated = 0
+        ScannedMods = 0
         outfd.write("pdb2json JIT PageHash calls under way...  (endpoint is " + self.JITHashServer + ")")
         for r in data:
+            failed = False
             #Isolate some context from the request so the output makes a little sense
-            idx = r.request.body.find("ModuleName")+11
+            idx = r.request.body.find("ModuleName")+13
             idx_end = r.request.body[idx:].find(",")
             info = r.request.body[idx:idx+idx_end]
-
-            outfd.write("Request info for module" + info + "\n")
+            ScannedMods += 1
+            ModBlksValidated = 0
+            #outfd.write("Request info for module " + info + " ")
             if r.text is not None:
                 try:
+                    # The header is a known set of fixes let's only count +x code anyhow since the PE header is not mappex +x typically anyhow
+                    modPageCount = r.json().__len__() - 1
+                    if modPageCount == 0:
+                        modPageCount = 1 
+                    VirtualBlocksChecked += modPageCount
                     responses=r.json()
                     for x in responses:
-                        print (str(hex(x["Address"])) + " was verified SHA256? " + str(x["HashCheckEquivalant"]))
-                except ValueError:
-                    outfd.write("server had no data, some binaries are not in the database. Feel free to drop us a line on what ones are missing.")
+                        # Super verbose output
+                        if self.StatsOutput is False:
+                            print (str(hex(x["Address"])) + " was verified SHA256? " + str(x["HashCheckEquivalant"]))
+                        # if we fail the hash check do not accumulate the results
+                        if x["HashCheckEquivalant"] is not True:
+                            continue
+                        ModBlksValidated += 1
+                        VBValidated += 1
+                    outfd.write("{0:<60} {1:>10}% \t{2:x} bytes\n".format(info, str((ModBlksValidated * 100.0 / modPageCount)), modPageCount*0x1000))
+                except:
+                    #some binaries are not in the database. This is MS software and pretty much the OS's
+                    failed = True
+                    outfd.write("Exception (" + str(sys.exc_info()[0]) + ")")
+            else:
+                failed = True
+                outfd.write("Non-exception failure, ")
+            if failed is True:
+                outfd.write(") failure was handling input: " + info + "\n")
+
+        if self.StatsOutput:
+            print ("Run Time: " + str(time.time() - self.StartTime))
+            print ("A total of " + str(ScannedMods) + " modules scanned.  Scanned Pages " + str(VirtualBlocksChecked) + " with " + str(VBValidated) + " Validations.")
+            print (str(VBValidated * 100.0 / VirtualBlocksChecked) +  " percent of queried code was able to be 100% identified as a known code file. Validated bytes: " + str(VBValidated * 0x1000) + " of a requested: " + str(VirtualBlocksChecked * 0x1000))
