@@ -1,9 +1,36 @@
 # Scripting
-PS / Bash / Other scripts For FUN!
+PS / Bash / Pyton / Other scripts For FUN!
 
-# Using the HashServer 
+# Volatility [plugin](https://github.com/K2/Scripting/blob/master/inVteroJitHash.py)
 
-You can now validate software locally.  There is NO database, all the memory integrity validation is just in time, the server uses the relocation information from the client to calculate the SHA256 hash validation per-page and reports on the adjusted value.  This dramatically lowers the TCO / administrative overhead over traditional golden-image type integrity checking.
+Expanding to other platforms is now super easy.  The minimum protocol format is as follows;
+
+```python
+import requests
+req_json = {
+    "HdrHash":  "QUTB1TPisyVGMq0do/CGeQb5EKwYHt/vvrMHcKNIUR8=",
+    "TimeDateStamp":  3474455660,
+    "AllocationBase":  140731484733440,
+    "BaseAddress":  140731484737536,
+    "ImageSize":  1331200,
+    "ModuleName":  "ole32.dll",
+    "HashSet":[{ "Address":  140731484798976, "Hash":  "+REyeLCxvwPgNJphE6ubeQVhdg4REDAkebQccTRLYL8="},
+               { "Address":  140731484803072, "Hash":  "xQJiKrNHRW739lDgjA+/1VN1P3VSRM5Ag6OHPFG6594="},
+               { "Address":  140731484807168, "Hash":  "ry9yVHhDQohYTfte0A4iTmNY8gDDfKUmFpxsWF67rtA="},
+               { "Address":  140731484811264, "Hash":  "bk31Su+2qFGhZ8PLN+fMLDy2SqPDMElmj0EZA62LX1c="},
+               { "Address":  140731484815360, "Hash":  "0RyIKfVFnxkhDSpxgzPYx2azGg59ht4TbVr66IXhVp4="}
+              ]
+            }
+requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json).json()
+```
+The HdrHash is the only thing that may change or go away, it's very annoying to deal with.  To maintain single page granularity (i.e. we can't nessissiarlly seek over the entire module if it's not paged in) we can be a bit restricted to repair modfiiactions to the header at load time.  The easiest one is the origional base address, the next one down is probably the CLR patch that is made to every CLR binary (the final non-zero bytes in the text section of a CLR are hot patched at load time), however there are quite a few issues with bound imports and the sort that really bloat out the code, and for what?  It's not even +X, I guess there are some pretty effetive attacks that you can do leveraging the PE header with respect to overlapping, invalid sizes/layouts that can make it easier to hide in the address space.  (FWIW I think the Windows loader maxes out at 96 sections per PE despite the 16bit capacity).
+
+That said, if we ignore HdrHash right now, to construct the remainder of this JSON call is a cake walk.  A lot of the testing I've done seems to indicate that this technique dosent have that many drawbacks.  And if it's focused on this one purpose, the benifit of having no database to manageg is helpful. 
+
+
+# Using the HashServer
+
+You can now validate (custom) software locally.  There is NO database, all the memory integrity validation is just in time, the server uses the relocation information from the client to calculate the SHA256 hash validation per-page and reports on the adjusted value.  This dramatically lowers the TCO / administrative overhead over traditional golden-image type integrity checking.
 
 When combined with a local HashServer. Test-AllVirtualMemory.ps1 will give you a binary hex diff view of memory artifacts and also the capability of validating custom software that is not in the public repository.
 
