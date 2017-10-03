@@ -12,7 +12,6 @@
 # //
 # // You should have received a copy of the GNU Affero General Public License
 # // along with this program.If not, see<http://www.gnu.org/licenses/>.
-
 ###############################################################################################
 #
 # To use this with volatility place this .py anywhere, ensure you have volatility working.
@@ -22,7 +21,6 @@
 #  --profile=Win10x64_14393 invterojithash
 #
 # I'll be looking to make updates feel free to give me some issues through "github.com/K2"
-#
 # 
 # OPERATIONS: The client script you run perform's a basic sha256 of whatever is in memory with no regard
 # for relocations or anything.  Very simple.  All of the heavy lifting magic is done on the server time 
@@ -33,9 +31,11 @@
 # I haven't written the PE header fixes yet for this code as it's currently done for the PowerShell, in effect
 # there are so many changes for the PE header, it's like a shotgun blast of bits that need adjusting. 
 #
+# TODO: Add kernel modules/space
+#
 # Enjoy!
 ################################################################################################
-
+import volatility.addrspace
 import volatility.commands as commands
 import volatility.utils as utils
 import volatility.win32.tasks as tasks
@@ -44,91 +44,142 @@ import base64
 import sys
 import requests
 from Crypto.Hash import SHA256
+from volatility.addrspace import *
 
 class inVteroJitHash(commands.Command):
-    """Use the public free inVtero JIT Page hash server to respond with integrity information"""
-    #"http://Zammey:3342/api/PageHash/x"
+    '''
+    Use the public free inVtero JIT Page hash server to respond with integrity information.
+    
+    The JitPageHash service endpoint is running with the json2pdb job. 
+    "https://pdb2json.azurewebsites.net/api/PageHash/x"
+
+    Below is a sample "python.requests" request/response that demonstrates the expected functionality.
+    The response information is very terse so it's a good idea to maintain some meta-information
+    across the request since it's pumped into the data render_text method.
+
+    ---- snip -- snip ---- ( below is copy/pasteable into a python shell to test ) ---- snip -- snip ----
+    import requests
+    req_json = {
+        "HdrHash":  "QUTB1TPisyVGMq0do/CGeQb5EKwYHt/vvrMHcKNIUR8=",
+        "TimeDateStamp":  3474455660,
+        "AllocationBase":  140731484733440,
+        "BaseAddress":  140731484737536,
+        "ImageSize":  1331200,
+        "ModuleName":  "ole32.dll",
+        "HashSet":[
+            {
+                "Address":  140731484798976,
+                "Hash":  "+REyeLCxvwPgNJphE6ubeQVhdg4REDAkebQccTRLYL8="
+            },
+            {
+                "Address":  140731484803072,
+                "Hash":  "xQJiKrNHRW739lDgjA+/1VN1P3VSRM5Ag6OHPFG6594="
+            },
+            {
+                "Address":  140731484807168,
+                "Hash":  "ry9yVHhDQohYTfte0A4iTmNY8gDDfKUmFpxsWF67rtA="
+            },
+            {
+                "Address":  140731484811264,
+                "Hash":  "bk31Su+2qFGhZ8PLN+fMLDy2SqPDMElmj0EZA62LX1c="
+            },
+            {
+                "Address":  140731484815360,
+                "Hash":  "0RyIKfVFnxkhDSpxgzPYx2azGg59ht4TbVr66IXhVp4="
+            }
+        ]
+    }
+    requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json).json()
+
+    ---- snip -- snip ---- the lines below are the output of the above service call ---- snip -- snip  ----
+
+    [{u'Address': 140731484733440L, u'HashCheckEquivalant': True},
+    {u'Address': 140731484798976L, u'HashCheckEquivalant': True},
+    {u'Address': 140731484803072L, u'HashCheckEquivalant': True},
+    {u'Address': 140731484807168L, u'HashCheckEquivalant': True},
+    {u'Address': 140731484811264L, u'HashCheckEquivalant': True},
+    {u'Address': 140731484815360L, u'HashCheckEquivalant': True}]
+    '''
+    #JITHashServer = "http://Zammey:7071/api/PageHash/x"
     JITHashServer = "https://pdb2json.azurewebsites.net/api/PageHash/x"
-    StatsOutput = True
     StartTime = time.time()
     def __init__(self, config, *args, **kwargs):
         commands.Command.__init__(self, config, *args)
+        config.add_option('SuperVerbose', short_option = 's',
+                      help = 'Display per page validation results.',
+                      action = 'store_true', default = False)
         
     def is_nxd(self, vaddr, addr_space):
-        '''
-        I want too know if the page table defines
-        this virtualaddress to be restricted from execution.
-        True means that is something we can ignore based on NX or missing or not valid.
+        """
+        Is the page for a given virtualaddress to be restricted from execution or not present?
 
-        The JitPageHash service endpoint is running with the json2pdb job. 
-        "https://pdb2json.azurewebsites.net/api/PageHash/x"
+        The return value True is something we are ignoring. False means it's present and unrestricted.
 
-        A sample "python.requests" request/response that demonstrates the expected functionality.
+        Parameters
+        ----------
+        vaddr : long
+            A virtual address from IA32PAE or AMD64 compatible address spaces  
+        addr_space : Addrspace
+            An instance of the address space that contains our page table 
 
-        The response information is very terse so it's a good idea to maintain some meta-information
-        across the request since it's pumped into the data render_text method
-        ---- snip -- snip ---- below here is copy/pasteable into python shell to test ---- snip -- snip ----
-import requests
-req_json = {
-    "HdrHash":  "QUTB1TPisyVGMq0do/CGeQb5EKwYHt/vvrMHcKNIUR8=",
-    "TimeDateStamp":  3474455660,
-    "AllocationBase":  140731484733440,
-    "BaseAddress":  140731484737536,
-    "ImageSize":  1331200,
-    "ModuleName":  "ole32.dll",
-    "HashSet":[
-                    {
-                        "Address":  140731484798976,
-                        "Hash":  "+REyeLCxvwPgNJphE6ubeQVhdg4REDAkebQccTRLYL8="
-                    },
-                    {
-                        "Address":  140731484803072,
-                        "Hash":  "xQJiKrNHRW739lDgjA+/1VN1P3VSRM5Ag6OHPFG6594="
-                    },
-                    {
-                        "Address":  140731484807168,
-                        "Hash":  "ry9yVHhDQohYTfte0A4iTmNY8gDDfKUmFpxsWF67rtA="
-                    },
-                    {
-                        "Address":  140731484811264,
-                        "Hash":  "bk31Su+2qFGhZ8PLN+fMLDy2SqPDMElmj0EZA62LX1c="
-                    },
-                    {
-                        "Address":  140731484815360,
-                        "Hash":  "0RyIKfVFnxkhDSpxgzPYx2azGg59ht4TbVr66IXhVp4="
-                    }
-                ]
-}
-requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json).json()
-
----- snip -- snip ---- the lines below are the output of the above service call ---- snip -- snip  ----
-
-[{u'Address': 140731484733440L, u'HashCheckEquivalant': True},
- {u'Address': 140731484798976L, u'HashCheckEquivalant': True},
- {u'Address': 140731484803072L, u'HashCheckEquivalant': True},
- {u'Address': 140731484807168L, u'HashCheckEquivalant': True},
- {u'Address': 140731484811264L, u'HashCheckEquivalant': True},
- {u'Address': 140731484815360L, u'HashCheckEquivalant': True}]
-        '''
-
-        vaddr = long(vaddr)
+        Returns
+        -------
+        Boolean
+            True means that the page at address vaddr is ignored based on NX or missing by means of not having the "valid" bit set in the page table
+        """
         retVal = True
-        pml4e = addr_space.get_pml4e(vaddr)
-        if not addr_space.entry_present(pml4e):
-            return True
-        pdpe = addr_space.get_pdpi(vaddr, pml4e)
-        if not addr_space.entry_present(pdpe):
-            return True
-        if addr_space.page_size_flag(pdpe):
-            return addr_space.is_nx(pdpe)
-        pgd = addr_space.get_pgd(vaddr, pdpe)
-        if addr_space.entry_present(pgd):
+        vaddr = long(vaddr)
+        if isinstance(addr_space, volatility.plugins.addrspaces.amd64.AMD64PagedMemory) is False:
+            pdpe = addr_space.get_pdpi(vaddr)
+            if not addr_space.entry_present(pdpe):
+                return retVal
+            pgd = addr_space.get_pgd(vaddr, pdpe)
+            if not addr_space.entry_present(pgd):
+                return retVal
             if addr_space.page_size_flag(pgd):
-                return addr_space.is_nx(pgd)
+                return self.is_nx(pgd)
             else:
                 pte = addr_space.get_pte(vaddr, pgd)
-                return addr_space.is_nx(pte)
-        return True
+                if not addr_space.entry_present(pte):
+                    return retVal
+                return self.is_nx(pte)
+        else:
+            pml4e = addr_space.get_pml4e(vaddr)
+            if not addr_space.entry_present(pml4e):
+                return retVal
+            pdpe = addr_space.get_pdpi(vaddr, pml4e)
+            if not addr_space.entry_present(pdpe):
+                return retVal
+            if addr_space.page_size_flag(pdpe):
+                return self.is_nx(pdpe)
+            pgd = addr_space.get_pgd(vaddr, pdpe)
+            if addr_space.entry_present(pgd):
+                if addr_space.page_size_flag(pgd):
+                    return self.is_nx(pgd)
+                else:
+                    pte = addr_space.get_pte(vaddr, pgd)
+                    if not addr_space.entry_present(pte):
+                        return retVal
+                    return self.is_nx(pte)
+            return retVal
+        raise ValueError('The underlying address space does not appear to be supported', type(addr_space), addr_space)
+    
+    def is_nx(self, entry):
+        """
+        Return if the most significant bit is set.
+
+        The most significant bit represents the "NO EXECUTE" or "EXECUTION DISABLED" flag for IA32PAE and AMD64 ABI's
+
+        Parameters
+        ----------
+        entry : long
+            An entry from the page table.
+        
+        Returns
+        -------
+            The status of the NX/XD bit.
+        """
+        return entry & (1 << 63) == (1 << 63)
 
     def mod_get_ptes(self, mod, addr_space):
         for vpage in range(mod.DllBase, mod.DllBase + mod.SizeOfImage, 4096):
@@ -142,12 +193,13 @@ requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json
         return base64.b64encode(sha.digest())
 
     def calculate(self):
-        StartTime = time.time()
         addr_space = utils.load_as(self._config)
         tasklist = []
         modslist = []
         tasklist = [t for t in tasks.pslist(addr_space)]
         taski = 0
+        # Reset StartTime to commence as we begin interating the list provided by volatiltiy.
+        StartTime = time.time()
         for task in tasklist:
             taski += 1
             print("\nScanning: " + task.ImageFileName + "(" + str(taski) + " of " + str(tasklist.__len__()) + ")\n")
@@ -189,10 +241,9 @@ requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json
             info = r.request.body[idx:idx+idx_end]
             ScannedMods += 1
             ModBlksValidated = 0
-            #outfd.write("Request info for module " + info + " ")
             if r.text is not None:
                 try:
-                    # The header is a known set of fixes let's only count +x code anyhow since the PE header is not mappex +x typically anyhow
+                    # The header is a known set of fixes let's only count +x code anyhow since the PE header is not mapped +x typically anyhow
                     modPageCount = r.json().__len__() - 1
                     if modPageCount == 0:
                         modPageCount = 1 
@@ -200,7 +251,7 @@ requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json
                     responses=r.json()
                     for x in responses:
                         # Super verbose output
-                        if self.StatsOutput is False:
+                        if self._config.SuperVerbose is True:
                             print (str(hex(x["Address"])) + " was verified SHA256? " + str(x["HashCheckEquivalant"]))
                         # if we fail the hash check do not accumulate the results
                         if x["HashCheckEquivalant"] is not True:
@@ -218,7 +269,8 @@ requests.post("https://pdb2json.azurewebsites.net/api/PageHash/x", json=req_json
             if failed is True:
                 outfd.write(") failure was handling input: " + info + "\n")
 
-        if self.StatsOutput:
-            print ("Run Time: " + str(time.time() - self.StartTime))
-            print ("A total of " + str(ScannedMods) + " modules scanned.  Scanned Pages " + str(VirtualBlocksChecked) + " with " + str(VBValidated) + " Validations.")
-            print (str(VBValidated * 100.0 / VirtualBlocksChecked) +  " percent of queried code was able to be 100% identified as a known code file. Validated bytes: " + str(VBValidated * 0x1000) + " of a requested: " + str(VirtualBlocksChecked * 0x1000))
+        print ("Run Time: " + str(time.time() - self.StartTime) + " seconds.")
+        TotBytesValidated = VBValidated * 0x1000
+        TotalBytesChecked = VirtualBlocksChecked * 0x1000
+        print ("A total of " + str(ScannedMods) + " modules scanned.  Scanned Pages (count of) " + str(VirtualBlocksChecked) + " with (count of) " + str(VBValidated) + " validations.")
+        print (str(VBValidated * 100.0 / VirtualBlocksChecked) + "% of queried code was able to be 100% identified as a originating from a known code file. Validated bytes: " + str(TotBytesValidated) + " of a requested: " + str(TotalBytesChecked))
