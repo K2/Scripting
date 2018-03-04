@@ -82,6 +82,7 @@ import volatility.win32.modules as modules
 import os, time, base64, sys, threading
 import json, urllib, urllib2
 import gevent, struct, retry, traceback, colorama
+import ntpath
 
 from os import environ
 from retry import retry
@@ -95,6 +96,8 @@ from urllib2 import HTTPError, URLError
 from gevent.event import AsyncResult
 from colorama import init, AnsiToWin32
 from colored import fg, bg, attr
+from tqdm import tqdm
+from multiprocessing import freeze_support, RLock
 
 class inVteroJitHash(commands.Command):
     '''
@@ -164,6 +167,15 @@ class inVteroJitHash(commands.Command):
     ScannedMods = 0
     VirtualBlocksChecked = 0
     StartTime = time.time()
+    MissList = []
+    TotalProgress = []
+    TotBytesValidated = 0
+    TotBytesValidated = 0
+    TotalLastN = 0
+    TotPercent = 0.0
+    TotalBar = None
+    logg = None
+    DumpFolder = None
 
     def __init__(self, config, *args):
         # no color on Windows yet, this keeps the output from looking insane with all the ANSI
@@ -174,6 +186,10 @@ class inVteroJitHash(commands.Command):
         commands.Command.__init__(self, config, *args)
         config.add_option('SuperVerbose', short_option='s', help='Display per page validation results.', action='store_true', default=False)
         config.add_option('ExtraTotals', short_option='x', help='List of all misses per-module.', action='store_true', default=False)
+        config.add_option('DumpFolder', short_option='D', help='Dump the failed blocks to a specified folder', default=None)
+        config.add_option('FailFile', short_option='F', help='Output file containing detailed information about unverifiable memory', default='FailedValidation.txt')
+
+        os.system('setterm -cursor off')
 
     # This method is a huge bit of code that should of been in volatility
     # Anyhow, NX bit's need to be checked at every layer of the page table.
@@ -272,12 +288,20 @@ class inVteroJitHash(commands.Command):
         return hashB64
 
     # if this is lagging you out dial back the tries/delay... i'm pretty aggressive here
-    @retry(HTTPError, tries=8, delay=3, backoff=2)
-    def pozt(self, ctx):
+    @retry(HTTPError, tries=16, delay=3, backoff=2)
+    def pozt(self, LocalMod):
         rvData = ""
         try:
-            data = ctx["json"]
-            headers = {'Content-Type':'application/json', "Accept": "text/plain"}
+            data = LocalMod["json"]
+            moduleName = ""
+
+            if data.has_key("ModuleName"):
+                moduleName = data["ModuleName"]
+
+            #LocalMod["Ctx"]["bar"].set_postfix_str('{:<}{:<}'.format('recv hashes: ', ntpath.basename(moduleName)))
+            
+            headers = {'Content-Type':'application/json', 'Accept':'text/plain'}
+            
             dataEncoded = json.dumps(data)
             req = urllib2.Request(self.JITHashServer, dataEncoded, headers)
             response = urllib2.urlopen(req)
@@ -293,107 +317,95 @@ class inVteroJitHash(commands.Command):
         finally:
             a = AsyncResult()
             a.set(rvData)
-            ctx["resp"] = a
-        return rvData
+            LocalMod["resp"] = a.get(block=True)
+            self.output(LocalMod)
+
+        return LocalMod
 
     # Volatility's contract defines this as the entry point for modules.  Here we do all of our work and orchastrate our internal async/coroutines through
     # the entire execution.  The completion routine render_text is for a minimal amount of reporting.
+
     def calculate(self):
+        self.DumpFolder = (self._config.DumpFolder or '')
+        self.logg = open(self._config.FailFile, mode="w+", buffering=8192)
         # get the null hash (at runtime in case a different hash is used etc..)
         null_page = bytearray(4096)
         self.null_hash = self.HashPage(null_page)
 
         addr_space = utils.load_as(self._config)
-
         if isinstance(addr_space, volatility.plugins.addrspaces.intel.IA32PagedMemory) and not isinstance(addr_space, volatility.plugins.addrspaces.intel.IA32PagedMemoryPae):
             raise "The memory model of this memory dump dates from the 1990's and does not support execute protection."
 
         outputJobs = None
-        tasklist = [t for t in tasks.pslist(addr_space)]
         taski = 0
+        taskCnt = 0
+        tasklist = tasks.pslist(addr_space)
+        for _ in tasks.pslist(addr_space):
+            taskCnt += 1
 
-        print("{}{}{} [{}]".format(fg("chartreuse_1"), "pdb2json JIT PageHash calls under way...  endpoint ", fg("hot_pink_1b"), self.JITHashServer, attrs=["bold"]))
-        
+        print("{}{}{} [{}]{}".format(fg("chartreuse_1"), "pdb2json JIT PageHash calls under way...  endpoint ", fg("hot_pink_1b"), self.JITHashServer, fg("sky_blue_1"), attrs=["bold"]))
+        bformat = '[{elapsed:<}]{l_bar:<}{postfix:<}{bar}|'
+        self.TotalBar = tqdm(desc="TotalProgress{}".format(fg("light_sky_blue_3a"), total=taskCnt, position=0, mininterval=0.5, bar_format=bformat)
         # The timer is reset here since were not counting the coldstartup time
         self.StartTime = time.time()
         for task in tasklist:
             taski += 1
             ctxColl = []
-    
-            print("{}{}{} [{}]{} [{} of {}]".format(fg("green"), "Scanning", fg("spring_green_2b"), task.ImageFileName, fg("white"), str(taski), str(tasklist.__len__())))
-            #try:
+
             proc_as = task.get_process_address_space()
             mods = []
-
             # Volatility workaround as there is not a consistant interface I know of 
             # to handle AS the same way for kernel & user
-            if 4 == task.UniqueProcessId:
+            if task.UniqueProcessId == 4:
                 mods = list(modules.lsmod(addr_space))
                 proc_as = addr_space
             else:
-                #continue
                 mods = list(task.get_load_modules())
 
+            TaskName = "[" + task.ImageFileName + "-" + str(task.UniqueProcessId) + "]"
+
+            taskBar = tqdm(desc=TaskName, total=len(mods), position=1, leave=False, mininterval=0.5, bar_format=bformat)
+            p = dict({"Name":TaskName, "Task":task, "TaskBlockCount":0, "ModContext":[], "bar":taskBar})
             for mod in mods:
+#@                taskBar.set_postfix_str('{} modules'.format(len(mods), refresh=True)
                 hashAddr = []
                 hashVal = []
-                try:
-                    for vpage, nx in self.mod_get_ptes(mod, proc_as):
-                        if(nx):
-                            continue
-                        data = proc_as.read(vpage, 4096)
-                        if data is None or data is self.null_hash:
-                            continue
-
-                        hashAddr.append(str(vpage))
-                        hashVal.append(self.HashPage(data))
-                    
-                    # these statements are yet another workaround for volatility
-                    # for some unknown reason these data structures have never been written into Volatility...
-                    # of course you can acquire the timestamp by reading the nt_header/fileheader/etc but that data is
-                    # significantly lower quality given that it can be modified at any time.  The kernel data structure
-                    # remains valid unless the attacker kills the process etc... In any event (hah) since this value has never changed
-                    # I hard coded it here for simplicity.  Perhaps I should enforce always using it, will circle back 360 on that.. :O
-                    timevalue = mod.TimeDateStamp
-                    #this should only work for kernel space modules
-                    if timevalue == 0 and task.UniqueProcessId == 4:
-                        timeLoc = self.to_int64(mod.v() + 0x9c)
-                        redInBytes = addr_space.read(timeLoc, 4)
-                        if redInBytes is not None and len(redInBytes) == 4:
-                            timevalue = unpack("<L", redInBytes)[0]
-                    
-                    req_hdr = { 
-                        "ModuleName": str(mod.FullDllName or ''),
-                        "ImageSize": str(mod.SizeOfImage),
-                        "BaseAddress": str(mod.DllBase),
-                        "AllocationBase": str(mod.DllBase),
-                        "TimeDateStamp": str(int(timevalue)),
-                        "HdrHash": self.HashPage(proc_as.read(mod.DllBase, 4096)),
-                        "HashSet": [{"Address": a, "Hash": h} for a, h in zip(hashAddr, hashVal)]
-                    }
-                    ctx = dict({"task":task, "json":req_hdr})
-
-                    ctxColl.append(ctx)
-
-                except (KeyboardInterrupt, SystemExit):
-                    raise
-                except:
-                    print("{}{}{}[{}]".format(fg("navajo_white_1"), "Exce[ption ", fg("light_magenta"), str(sys.exc_info()[0])))
-                    print("{}{}".format(fg("hot_pink_1b"), sys.exc_info()[1]))
-                    print_exc()
-
-            # The output jobs are staggered in lock step by 'task' or process.
-            # You will see 'Scanning foo' followed by a series of bar, modules being reported are actually from the previous scanning...
-            # You can imagine were running two bundles of greenline's or coroutines or whatever gevent calls them ;)
-            jobs = [self.pool.spawn(self.pozt, cx) for cx in ctxColl]
-            self.pool.join()
-            
-            # were coming in from another loop ensure out output isn't chopped up, tasks remain grouped.
-            if outputJobs is not None:
-                gevent.wait(outputJobs)
-
-            # Spawn outputter's and fast forward to the next task while they are running async
-            outputJobs = [gevent.spawn(self.output, ctxColl)]
+                for vpage, nx in self.mod_get_ptes(mod, proc_as):
+                    if(nx):
+                        continue
+                    data = proc_as.read(vpage, 4096)
+                    if data is None or data is self.null_hash:
+                        continue
+                    hashAddr.append(str(vpage))
+                    hashVal.append(self.HashPage(data))
+            # these statements are yet another workaround for volatility
+            # for some unknown reason these data structures have never been written into Volatility...
+            # of course you can acquire the timestamp by reading the nt_header/fileheader/etc but that data is
+            # significantly lower quality given that it can be modified at any time.  The kernel data structure
+            # remains valid unless the attacker kills the process etc... In any event (hah) since this value has never changed
+            # I hard coded it here for simplicity.  Perhaps I should enforce always using it, will circle back 360 on that.. :O
+                timevalue = mod.TimeDateStamp
+                #this should only work for kernel space modules
+                if timevalue == 0 and task.UniqueProcessId == 4:
+                    timeLoc = self.to_int64(mod.v() + 0x9c)
+                    redInBytes = addr_space.read(timeLoc, 4)
+                    if redInBytes is not None and len(redInBytes) == 4:
+                        timevalue = unpack("<L", redInBytes)[0]
+                req_hdr = {
+                    "ModuleName": str(mod.FullDllName or ''),
+                    "ImageSize": str(mod.SizeOfImage),
+                    "BaseAddress": str(mod.DllBase),
+                    "AllocationBase": str(mod.DllBase),
+                    "TimeDateStamp": str(int(timevalue)),
+                    "HdrHash": self.HashPage(proc_as.read(mod.DllBase, 4096)),
+                    "HashSet": [{"Address": a, "Hash": h} for a, h in zip(hashAddr, hashVal)]
+                }
+                LocalMod = dict({"Module":mod, "Ctx":p, "ModBlockCount":hashAddr.count, "json":req_hdr, "AS":addr_space})
+                p["TaskBlockCount"] = p["TaskBlockCount"] + len(hashAddr)
+                p["ModContext"].append(LocalMod)
+            outputJobs = [self.pool.spawn(self.pozt, cx) for cx in p["ModContext"]]
+            gevent.wait(outputJobs)
+            self.TotalBar.update(1)
 
     # Ulong64 would be nice, this is a needed workaround
     @staticmethod
@@ -422,95 +434,113 @@ class inVteroJitHash(commands.Command):
         return level
 
     # this method is really just a bunch of console I/O reporting on the service calls
-    def output(self, ctxColl):
+    def output(self, Local):
         """Output data in a nonstandard but fun and more appealing way."""
-        for ctx in ctxColl:
-            try:
-                task = ctx["task"]
-                req_hdr = ctx["json"]
-                ar = ctx["resp"]
-                r = ar.get(block=True)
-                rj = None
+        bar = Local["Ctx"]["bar"]
+        try:
 
-                moduleName = ""
-                if req_hdr.has_key("ModuleName"):
-                    moduleName = req_hdr["ModuleName"]
+            addr_space = Local["AS"]
 
-                info = "{}{}[{}]{}[{}]{}[{}]".format(bg("black"), fg("light_green"), task.UniqueProcessId, fg("white"), task.ImageFileName, fg("spring_green_2b"), moduleName)
+            task = Local["Ctx"]["Task"]
+            req_hdr = Local["json"]
+            r = Local["resp"]
+            bar.update(1)
+            
+            rj = None
 
-                self.ScannedMods += 1
-                ModBlksValidated = 0
-                modMissedBlocks = []
+            moduleName = ""
+            if req_hdr.has_key("ModuleName"):
+                moduleName = req_hdr["ModuleName"]
 
-                if r is not None:
-                    if len(r) < 1:
-                        print("{}{} {}".format(info, fg("hot_pink_1b"), "response from server is empty, likely unknown or 3rd party binary"))
-                        continue
-                    try:
-                        rj = json.loads(r)
-                    except:
-                        print("{}{} {}[{}]{}[{}]{}[{}]".format(fg("navajo_white_1"), "failure with deserializing json ", fg("yellow_2"), r, fg("light_green"), type(r), fg("light_magenta"), str(sys.exc_info()[0])))
+            info = "{:<}{}[{:<}]".format(bg("black"), fg("spring_green_2b"), ntpath.basename(moduleName))
 
-                    #print rj
-                    # The header is a known set of fixes let's only count +x code anyhow since the PE header is not mapped +x typically anyhow
-                    modPageCount = r.count("{") - 1
-                    if modPageCount == 0:
-                        modPageCount = 1
-                    self.VirtualBlocksChecked += modPageCount
+            self.ScannedMods += 1
+            ModBlksValidated = 0
+            modMissedBlocks = []
 
-                    # parse the response in a structured way
-                    if rj is not None:
-                        for rarr in rj:
-                            if not rarr.has_key("HashCheckEquivalant"):
-                                print("{}{} {}[{}]".format(fg("yellow"), "failure in IPC, response delivered as", fg("royal_blue_1"), str(r)))
-                            if rarr["HashCheckEquivalant"] is True:
-                                ModBlksValidated += 1
-                                self.VBValidated += 1
-                            else:
-                                modMissedBlocks.append(long(rarr["Address"]))
+            if r is not None:
+                if len(r) < 1:
+                    return
+                rj = json.loads(r)
+                modPageCount = r.count("{") - 1
+                if modPageCount == 0:
+                    modPageCount = 1
+                self.VirtualBlocksChecked += modPageCount
 
-                    if self._config.ExtraTotals is True:
-                        if not self.total_miss.has_key(moduleName):
-                            self.total_miss[moduleName] = (modPageCount, ModBlksValidated)
+                # parse the response in a structured way
+                if rj is not None:
+                    for rarr in rj:
+                        if rarr["HashCheckEquivalant"] is True:
+                            ModBlksValidated += 1
+                            self.VBValidated += 1
                         else:
-                            currCnt = self.total_miss[moduleName]
-                            self.total_miss[moduleName] = (currCnt[0] + modPageCount, currCnt[1] + ModBlksValidated)
+                            modMissedBlocks.append(long(rarr["Address"]))
 
-                    validPct = ((ModBlksValidated * 100.0) / modPageCount)
-                    level = self.PercentToColor(validPct)
-                    if modPageCount == 1:
-                        if ModBlksValidated == 1:
-                            level = fg("grey_19")
-                        if ModBlksValidated == 0:
-                            level = fg("grey_35")
+                if self._config.ExtraTotals is True:
+                    if not self.total_miss.has_key(moduleName):
+                        self.total_miss[moduleName] = (modPageCount, ModBlksValidated)
+                    else:
+                        currCnt = self.total_miss[moduleName]
+                        self.total_miss[moduleName] = (currCnt[0] + modPageCount, currCnt[1] + ModBlksValidated)
 
-                    infoLine="{} {}0x{:x} {}of {}0x{:x}{}{} --- {}[{}%]".format(info, fg("light_steel_blue_1"), ModBlksValidated<<12, fg("white"), bg("medium_purple_4"), modPageCount<<12, bg("black"), fg("white"), level, validPct)
-                    if self._config.SuperVerbose is True:
-                        for mb in modMissedBlocks:
-                            infoLine += " 0x{:x} ".format(mb)
+                validPct = float((ModBlksValidated * 100.0) / modPageCount)
+                level = self.PercentToColor(validPct)
+                if modPageCount == 1:
+                    if ModBlksValidated == 1:
+                        level = fg("grey_19")
+                    if ModBlksValidated == 0:
+                        level = fg("grey_35")
 
-                    print(infoLine)
+                infoLine="{:<}{:>6x}/{}{:<6x}{:<}[{:<2.2f}%]{}{}".format(fg("light_steel_blue_1"), ModBlksValidated<<12, fg("white"), modPageCount<<12, level, validPct, fg("light_green"), info)
+                
+                if validPct < 100.0:
+                    TaskName = Local["Ctx"]["Name"]
+                    self.logg.writelines(("\nFailures detected: ", infoLine,"\t: ", TaskName, "\r\n", "BlockAddrs:" ))
+                    
+                    #if self._config.SuperVerbose is True:
+                    for mb in modMissedBlocks:
+                        # by default skip headers
+                         if mb != req_hdr["BaseAddress"]:
+                            self.logg.write("0x{:x} ".format(mb))
+                            if len(self.DumpFolder) > 0:
+                                proc_as = task.get_process_address_space()
+                                if task.UniqueProcessId == 4:
+                                    proc_as = addr_space
 
-                else:
-                    print("{}{}".format(fg("medium_purple"), "Non-exception failure, "))
-            except:
-                print("{}{}{} [{}]".format(fg("navajo_white_1"), "Exception ", fg("light_magenta"), str(sys.exc_info()[0])))
-                print("{}".format(fg("yellow_2")))
-                print_exc()
+                                data = proc_as.read(mb, 4096)
+                                if data is not None:
+                                    with open("{}/{}-{:x}".format(self.DumpFolder, TaskName, mb), 'wb') as block:
+                                        block.write(bytearray(data))
+
+                
+                bar.set_description_str('{:<}'.format(infoLine))
+        except:
+            print_exc()
+        #update less frequently put this back in
+        #if self.TotalBar.n > self.TotalLastN:
+        self.TotBytesValidated = self.VBValidated << 12
+        self.TotalBytesChecked = self.VirtualBlocksChecked << 12
+        self.TotPercent = (self.VBValidated * 100.0 / self.VirtualBlocksChecked)
+        self.TotalLastN = self.TotalBar.n
+        self.TotalBar.set_postfix_str("{:<}[{:<2.3f}%]{:}[{:,}]{}{}[{:,}]{}".format(self.PercentToColor(self.TotPercent), self.TotPercent, fg("white"), self.TotBytesValidated, fg("sky_blue_1"), "/", self.TotalBytesChecked, fg("light_green")))
 
     def render_text(self, outfd, data):
+        os.system('setterm -cursor on')
         if self.VirtualBlocksChecked == 0:
             print ("{}{}".format(fg("yellow_2"), "error, nothing was processed"))
         else:
             RuntimeSeconds = int(time.time() - self.StartTime)
-            print ("{}{}{}[{}]{}{}".format(fg("sky_blue_1"), "Run Time ", fg("light_green"), str(RuntimeSeconds), fg("sky_blue_1"), " seconds."))
-            TotBytesValidated = self.VBValidated << 12
-            TotalBytesChecked = self.VirtualBlocksChecked << 12
-            TotPercent = (self.VBValidated * 100.0 / self.VirtualBlocksChecked)
+            print ("\r\n\r\n{}{}{}[{}]{}{}".format(fg("sky_blue_1"), "Run Time ", fg("light_green"), str(RuntimeSeconds), fg("sky_blue_1"), " seconds."))
+            self.TotBytesValidated = self.VBValidated << 12
+            self.TotalBytesChecked = self.VirtualBlocksChecked << 12
+            self.TotPercent = (self.VBValidated * 100.0 / self.VirtualBlocksChecked)
             print ("{}{}{}[{:,}]{}{}".format(fg("sky_blue_1"), "A total of ", fg("light_green"), self.ScannedMods, fg("sky_blue_1"), " modules scanned."))
-            print ("{}{}[{:,}]{}{}{}[{:,}]".format("Scanned Pages: ", fg("light_green"), self.VirtualBlocksChecked, fg("sky_blue_1"), ". Pages valid: ", fg("light_green"), self.VBValidated))
-            print ("{}[{}%]{}{}{}[{:,}]{}{}{}[{:,}]".format(self.PercentToColor(TotPercent), TotPercent, fg("sky_blue_1"), " assurance. Validated bytes: ", fg("light_green"), TotBytesValidated, fg("sky_blue_1"), " of ", fg("light_green"), TotalBytesChecked))
-            print ("{}{} {:,} {}".format(fg("white"), "Total I/O throughput:", TotalBytesChecked / RuntimeSeconds, "bytes per second."))
-        if self._config.ExtraTotals is True:
-            for key in self.total_miss:
-                print ("{}{} - {}".format(fg("hot_pink_1b"), key, self.total_miss[key]))
+            print ("{}{}[{:,}]{}{}{}[{:,}]".format("Scanned Pages: ", fg("light_green"), self.VirtualBlocksChecked, fg("sky_blue_1"), ". Pages valid: ", fg("light_green"), self.VBValidated)),
+            print (" {}[{:2.3f}%]{}{}{}[{:,}]{}{}{}[{:,}]".format(self.PercentToColor(self.TotPercent), self.TotPercent, fg("sky_blue_1"), " assurance. Validated bytes: ", fg("light_green"),self.TotBytesValidated, fg("sky_blue_1"), "/", fg("light_green"), self.TotalBytesChecked))
+            print ("{}{} {:,} {}".format(fg("white"), "Total I/O throughput:", self.TotalBytesChecked / RuntimeSeconds, "bytes per second."))
+        
+        for key in self.total_miss:
+            miss_info = "{}{} - {}".format(fg("hot_pink_1b"), key, self.total_miss[key])
+            self.logg.writelines((miss_info, "\n"))
+            if self._config.ExtraTotals is True:
+                print (miss_info)
