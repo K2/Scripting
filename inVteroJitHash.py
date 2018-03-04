@@ -70,7 +70,6 @@ You can setup you're own JIT hash server and host local to perform integrity che
 Enjoy!
 ################################################################################################
 """
-
 from gevent.monkey import patch_all
 patch_all()
 
@@ -344,13 +343,12 @@ class inVteroJitHash(commands.Command):
             taskCnt += 1
 
         print("{}{}{} [{}]{}".format(fg("chartreuse_1"), "pdb2json JIT PageHash calls under way...  endpoint ", fg("hot_pink_1b"), self.JITHashServer, fg("sky_blue_1"), attrs=["bold"]))
-        bformat = '[{elapsed:<}]{l_bar:<}{postfix:<}{bar}|'
-        self.TotalBar = tqdm(desc="TotalProgress{}".format(fg("light_sky_blue_3a"), total=taskCnt, position=0, mininterval=0.5, bar_format=bformat)
+        bformat = "[{elapsed:<}]{l_bar:<}{postfix:<}{bar}|"
+        self.TotalBar = tqdm(desc="TotalProgress{}".format(fg("light_sky_blue_3a"), total=taskCnt, position=0, mininterval=0.5, bar_format=bformat))
         # The timer is reset here since were not counting the coldstartup time
         self.StartTime = time.time()
         for task in tasklist:
             taski += 1
-            ctxColl = []
 
             proc_as = task.get_process_address_space()
             mods = []
@@ -500,18 +498,17 @@ class inVteroJitHash(commands.Command):
                     #if self._config.SuperVerbose is True:
                     for mb in modMissedBlocks:
                         # by default skip headers
-                         if mb != req_hdr["BaseAddress"]:
+                        if mb != req_hdr["BaseAddress"]:
                             self.logg.write("0x{:x} ".format(mb))
                             if len(self.DumpFolder) > 0:
                                 proc_as = task.get_process_address_space()
                                 if task.UniqueProcessId == 4:
                                     proc_as = addr_space
-
+                                    
                                 data = proc_as.read(mb, 4096)
                                 if data is not None:
                                     with open("{}/{}-{:x}".format(self.DumpFolder, TaskName, mb), 'wb') as block:
                                         block.write(bytearray(data))
-
                 
                 bar.set_description_str('{:<}'.format(infoLine))
         except:
