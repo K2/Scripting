@@ -18,7 +18,13 @@
 
 ##############################################################################################
 
-V.2 CHANGELOG
+V.3 CHANGELOG
+
+ * Finally Fast Forensics edition(tm)!!
+   * Improved client side SSL cert checking of server (secure++)
+   * Faster than doing a dlldump to you're local disk
+   * Better than doing a dlldump since you get something usefull
+   * Smarter than doign so since you should have 99/100 of the junk you don't care about out of you're way
 
  * Added heaps of colors!
 
@@ -33,14 +39,7 @@ V.2 CHANGELOG
    + Block offset that has the modified code
    + Special dump mode for just modified code
 
- * Here are the needful dependencies (i.e. requirements.txt);
-
-   colored==1.3.5
-   gevent==1.2.2
-   retry==0.9.2
-   colorama==0.3.7
-   pycrypto==2.6.1
-   volatility==2.1
+ * Needful dependencies in the txt file
 
 To use this with volatility place this .py anywhere, ensure you have volatility working.
 For example the command line below will simply run the invterojithash against the input memory image
@@ -70,8 +69,11 @@ You can setup you're own JIT hash server and host local to perform integrity che
 Enjoy!
 ################################################################################################
 """
-from gevent.monkey import patch_all
-patch_all()
+from gevent import monkey
+monkey.patch_all()
+
+import urllib3.contrib.pyopenssl
+urllib3.contrib.pyopenssl.inject_into_urllib3()
 
 import volatility.addrspace
 import volatility.commands as commands
@@ -79,9 +81,9 @@ import volatility.utils as utils
 import volatility.win32.tasks as tasks
 import volatility.win32.modules as modules
 import os, time, base64, sys, threading
-import json, urllib, urllib2
+import json, urllib, urllib2, urllib3
 import gevent, struct, retry, traceback, colorama
-import ntpath
+import ntpath, certifi
 
 from os import environ
 from retry import retry
@@ -155,9 +157,9 @@ class inVteroJitHash(commands.Command):
     #JITHashServer = "http://localhost:7071/api/PageHash/x"
     JITHashServer = "https://pdb2json.azurewebsites.net/api/PageHash/x"
 
-
     # Tune this if you want to hit the server harder
-    pool = Pool(16)
+    pool = Pool()
+    greenlits = []
 
     total_miss = {}
     null_hash = None
@@ -169,17 +171,17 @@ class inVteroJitHash(commands.Command):
     MissList = []
     TotalProgress = []
     TotBytesValidated = 0
-    TotBytesValidated = 0
     TotalLastN = 0
     TotPercent = 0.0
     TotalBar = None
     logg = None
     DumpFolder = None
-
+    headers = {'Content-Type':'application/json', 'Accept':'text/plain'}
+    http = urllib3.PoolManager(maxsize=512, block=True, headers = headers, cert_reqs='CERT_REQUIRED', ca_certs=certifi.where())
     def __init__(self, config, *args):
         # no color on Windows yet, this keeps the output from looking insane with all the ANSI
         if os.name == 'nt':
-            self.stream = AnsiToWin32(sys.stdout).stream
+            self.stream = AnsiToWin32(sys.stdout, convert=True).stream
             init()
             #init(convert=True)
         commands.Command.__init__(self, config, *args)
@@ -187,8 +189,10 @@ class inVteroJitHash(commands.Command):
         config.add_option('ExtraTotals', short_option='x', help='List of all misses per-module.', action='store_true', default=False)
         config.add_option('DumpFolder', short_option='D', help='Dump the failed blocks to a specified folder', default=None)
         config.add_option('FailFile', short_option='F', help='Output file containing detailed information about unverifiable memory', default='FailedValidation.txt')
-
-        os.system('setterm -cursor off')
+        if os.name is not 'nt':
+            os.system('setterm -cursor off')
+        else:
+            os.system('color 0f')
 
     # This method is a huge bit of code that should of been in volatility
     # Anyhow, NX bit's need to be checked at every layer of the page table.
@@ -203,9 +207,9 @@ class inVteroJitHash(commands.Command):
         Parameters
         ----------
         vaddr : long
-            A virtual address from IA32PAE or AMD64 compatible address spaces  
+            A virtual address from IA32PAE or AMD64 compatible address spaces 
         addr_space : Addrspace
-            An instance of the address space that contains our page table 
+            An instance of the address space that contains our page table
 
         Returns
         -------
@@ -292,19 +296,11 @@ class inVteroJitHash(commands.Command):
         rvData = ""
         try:
             data = LocalMod["json"]
-            moduleName = ""
-
-            if data.has_key("ModuleName"):
-                moduleName = data["ModuleName"]
-
-            #LocalMod["Ctx"]["bar"].set_postfix_str('{:<}{:<}'.format('recv hashes: ', ntpath.basename(moduleName)))
-            
-            headers = {'Content-Type':'application/json', 'Accept':'text/plain'}
-            
             dataEncoded = json.dumps(data)
-            req = urllib2.Request(self.JITHashServer, dataEncoded, headers)
-            response = urllib2.urlopen(req)
-            rvData = response.read()
+            #req = self.http.request('POST', self.JITHashServer, body=dataEncoded)
+            req = self.http.urlopen('POST', self.JITHashServer, headers=self.headers, body=dataEncoded)
+            #response = self.http.urlopen(req)
+            #rvData = req.data
         except HTTPError as inst:
             if inst.code == 204:
                 return rvData
@@ -315,8 +311,9 @@ class inVteroJitHash(commands.Command):
                 print("{}{}".format(fg("hot_pink_1b"), x))
         finally:
             a = AsyncResult()
-            a.set(rvData)
+            a.set(req.data)
             LocalMod["resp"] = a.get(block=True)
+            req.release_conn()
             self.output(LocalMod)
 
         return LocalMod
@@ -325,8 +322,9 @@ class inVteroJitHash(commands.Command):
     # the entire execution.  The completion routine render_text is for a minimal amount of reporting.
 
     def calculate(self):
-        self.DumpFolder = (self._config.DumpFolder or '')
+        self.DumpFolder = (self._config.DumpFolder or None)
         self.logg = open(self._config.FailFile, mode="w+", buffering=8192)
+        self.logg.write("On Windows, use \"type [Filename]\" for best results (Win10) {} JIT hash log file\n".format(fg("cornflower_blue")))
         # get the null hash (at runtime in case a different hash is used etc..)
         null_page = bytearray(4096)
         self.null_hash = self.HashPage(null_page)
@@ -343,8 +341,8 @@ class inVteroJitHash(commands.Command):
             taskCnt += 1
 
         print("{}{}{} [{}]{}".format(fg("chartreuse_1"), "pdb2json JIT PageHash calls under way...  endpoint ", fg("hot_pink_1b"), self.JITHashServer, fg("sky_blue_1"), attrs=["bold"]))
-        bformat = "[{elapsed:<}]{l_bar:<}{postfix:<}{bar}|"
-        self.TotalBar = tqdm(desc="TotalProgress{}".format(fg("light_sky_blue_3a"), total=taskCnt, position=0, mininterval=0.5, bar_format=bformat))
+        bformat = "{elapsed}{l_bar}{postfix}{bar}"
+        self.TotalBar = tqdm(desc="{}TotalProgress".format(fg("cornflower_blue"), total=taskCnt, position=0, mininterval=0.5, bar_format=bformat))
         # The timer is reset here since were not counting the coldstartup time
         self.StartTime = time.time()
         for task in tasklist:
@@ -352,7 +350,7 @@ class inVteroJitHash(commands.Command):
 
             proc_as = task.get_process_address_space()
             mods = []
-            # Volatility workaround as there is not a consistant interface I know of 
+            # Volatility workaround as there is not a consistant interface I know of
             # to handle AS the same way for kernel & user
             if task.UniqueProcessId == 4:
                 mods = list(modules.lsmod(addr_space))
@@ -382,6 +380,7 @@ class inVteroJitHash(commands.Command):
             # significantly lower quality given that it can be modified at any time.  The kernel data structure
             # remains valid unless the attacker kills the process etc... In any event (hah) since this value has never changed
             # I hard coded it here for simplicity.  Perhaps I should enforce always using it, will circle back 360 on that.. :O
+
                 timevalue = mod.TimeDateStamp
                 #this should only work for kernel space modules
                 if timevalue == 0 and task.UniqueProcessId == 4:
@@ -398,11 +397,23 @@ class inVteroJitHash(commands.Command):
                     "HdrHash": self.HashPage(proc_as.read(mod.DllBase, 4096)),
                     "HashSet": [{"Address": a, "Hash": h} for a, h in zip(hashAddr, hashVal)]
                 }
-                LocalMod = dict({"Module":mod, "Ctx":p, "ModBlockCount":hashAddr.count, "json":req_hdr, "AS":addr_space})
-                p["TaskBlockCount"] = p["TaskBlockCount"] + len(hashAddr)
-                p["ModContext"].append(LocalMod)
-            outputJobs = [self.pool.spawn(self.pozt, cx) for cx in p["ModContext"]]
-            gevent.wait(outputJobs)
+                if req_hdr["ModuleName"] is '':
+                    self.logg.write("{}{}{}: Unable to scan anonymous executable memory. {:#x} length: {:#x}{}.\n".format(bg("black"), fg("yellow_2"), TaskName, mod.DllBase, mod.SizeOfImage, fg("cornflower_blue")))
+                    filename = "{}/{}-{:#x}".format(self.DumpFolder, TaskName, mod.DllBase)
+                    open(filename, 'w').close()
+                    for vpage in range(mod.DllBase, mod.DllBase + mod.SizeOfImage, 4096):
+                        data = proc_as.read(vpage, 4096)
+                        if self.DumpFolder is not None and data is not None:
+                            with open(filename, 'ab') as block:
+                                block.write(bytearray(data))
+                else:
+                    LocalMod = dict({"Module":mod, "Ctx":p, "ModBlockCount":hashAddr.count, "json":req_hdr, "AS":addr_space})
+                    p["TaskBlockCount"] = p["TaskBlockCount"] + len(hashAddr)
+                    taskBar.update(1)
+                    self.pool.spawn(self.pozt, LocalMod)
+
+             #= [gevent.spawn(self.pozt, cx) for cx in p["ModContext"]]
+            #gevent.wait(outputJobs)
             self.TotalBar.update(1)
 
     # Ulong64 would be nice, this is a needed workaround
@@ -436,21 +447,17 @@ class inVteroJitHash(commands.Command):
         """Output data in a nonstandard but fun and more appealing way."""
         bar = Local["Ctx"]["bar"]
         try:
-
             addr_space = Local["AS"]
-
             task = Local["Ctx"]["Task"]
             req_hdr = Local["json"]
-            r = Local["resp"]
-            bar.update(1)
-            
+            r = Local["resp"]            
             rj = None
 
             moduleName = ""
             if req_hdr.has_key("ModuleName"):
                 moduleName = req_hdr["ModuleName"]
 
-            info = "{:<}{}[{:<}]".format(bg("black"), fg("spring_green_2b"), ntpath.basename(moduleName))
+            info = "{}[{:<}]".format(fg("spring_green_2b"), ntpath.basename(moduleName))
 
             self.ScannedMods += 1
             ModBlksValidated = 0
@@ -493,24 +500,26 @@ class inVteroJitHash(commands.Command):
                 
                 if validPct < 100.0:
                     TaskName = Local["Ctx"]["Name"]
-                    self.logg.writelines(("\nFailures detected: ", infoLine,"\t: ", TaskName, "\r\n", "BlockAddrs:" ))
+                    self.logg.writelines(("Failures detected: ", infoLine,"\t: ", TaskName, "\r\n", "BlockAddrs:   "))
                     
                     #if self._config.SuperVerbose is True:
                     for mb in modMissedBlocks:
                         # by default skip headers
                         if mb != req_hdr["BaseAddress"]:
-                            self.logg.write("0x{:x} ".format(mb))
-                            if len(self.DumpFolder) > 0:
+                            self.logg.write("{:#14x} ".format(mb))
+                            if self.DumpFolder is not None:
                                 proc_as = task.get_process_address_space()
                                 if task.UniqueProcessId == 4:
                                     proc_as = addr_space
                                     
                                 data = proc_as.read(mb, 4096)
                                 if data is not None:
-                                    with open("{}/{}-{:x}".format(self.DumpFolder, TaskName, mb), 'wb') as block:
+                                    with open("{}/{}-{:#x}".format(self.DumpFolder, TaskName, mb), 'wb') as block:
                                         block.write(bytearray(data))
+                    self.logg.write('\n')
                 
-                bar.set_description_str('{:<}'.format(infoLine))
+                bar.set_postfix_str('{:<}'.format(infoLine))
+                bar.update(1)            
         except:
             print_exc()
         #update less frequently put this back in
@@ -522,7 +531,12 @@ class inVteroJitHash(commands.Command):
         self.TotalBar.set_postfix_str("{:<}[{:<2.3f}%]{:}[{:,}]{}{}[{:,}]{}".format(self.PercentToColor(self.TotPercent), self.TotPercent, fg("white"), self.TotBytesValidated, fg("sky_blue_1"), "/", self.TotalBytesChecked, fg("light_green")))
 
     def render_text(self, outfd, data):
-        os.system('setterm -cursor on')
+        if os.name is not 'nt':
+            os.system('setterm -cursor on')
+        
+        print "{}{}".format(fg("hot_pink_1b"), "Join in progress of any outstanding async operations.")
+        gevent.joinall(self.pool)
+
         if self.VirtualBlocksChecked == 0:
             print ("{}{}".format(fg("yellow_2"), "error, nothing was processed"))
         else:
@@ -541,3 +555,5 @@ class inVteroJitHash(commands.Command):
             self.logg.writelines((miss_info, "\n"))
             if self._config.ExtraTotals is True:
                 print (miss_info)
+        if os.name is 'nt':
+            os.system('color')
