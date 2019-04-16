@@ -9,7 +9,8 @@
 # PDBGUID: (F4 12 A8 DD 28 AC 69 42 AB 80 73 D8 42 38 01 A4)
 # becomes {DDA812F4-AC28-4269-AB80-73D8423801A4}
 #  
-LLVMREADOBJ=`command -v llvm-readobj-4.0`
+# Must be llvm-readobj-4 or higher!!
+LLVMREADOBJ=`command -v llvm-readobj`
 CURL=`command -v curl`
 # A POSIX variable
 OPTIND=1
