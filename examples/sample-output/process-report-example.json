@@ -1,0 +1,84 @@
+{
+    "ScanTime": "2024-01-15T14:30:45.1234567Z",
+    "TargetHost": "WORKSTATION-01",
+    "ProcessFilter": [
+        "chrome.exe",
+        "firefox.exe",
+        "powershell.exe"
+    ],
+    "Summary": {
+        "TotalProcesses": 5,
+        "FullyValidated": 3,
+        "PartiallyValidated": 1,
+        "Suspicious": 1
+    },
+    "Processes": [
+        {
+            "Name": "chrome.exe",
+            "PID": 4532,
+            "PercentValid": 100.0,
+            "ModuleCount": 127,
+            "SuspiciousModules": []
+        },
+        {
+            "Name": "chrome.exe",
+            "PID": 5108,
+            "PercentValid": 100.0,
+            "ModuleCount": 134,
+            "SuspiciousModules": []
+        },
+        {
+            "Name": "chrome.exe",
+            "PID": 6244,
+            "PercentValid": 95.8,
+            "ModuleCount": 98,
+            "SuspiciousModules": [
+                {
+                    "Name": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.dll",
+                    "PercentValid": 98.2,
+                    "BaseAddress": 140731484733440
+                },
+                {
+                    "Name": "*VASpace* 0x7FFE12340000",
+                    "PercentValid": 0.0,
+                    "BaseAddress": 140730305454080
+                }
+            ]
+        },
+        {
+            "Name": "firefox.exe",
+            "PID": 7892,
+            "PercentValid": 100.0,
+            "ModuleCount": 156,
+            "SuspiciousModules": []
+        },
+        {
+            "Name": "powershell.exe",
+            "PID": 3344,
+            "PercentValid": 67.3,
+            "ModuleCount": 89,
+            "SuspiciousModules": [
+                {
+                    "Name": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                    "PercentValid": 95.1,
+                    "BaseAddress": 140731480342528
+                },
+                {
+                    "Name": "C:\\Windows\\System32\\mscoree.dll",
+                    "PercentValid": 88.4,
+                    "BaseAddress": 140731484209152
+                },
+                {
+                    "Name": "*VASpace* 0x7FFE89AB0000",
+                    "PercentValid": 0.0,
+                    "BaseAddress": 140730423640064
+                },
+                {
+                    "Name": "*VASpace* 0x7FFE89BC0000",
+                    "PercentValid": 0.0,
+                    "BaseAddress": 140730424740864
+                }
+            ]
+        }
+    ]
+}
